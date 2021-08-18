@@ -2,9 +2,9 @@ package deployspec
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
-	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 )
 
 type DeploySpecFunctionCode struct {
@@ -34,14 +34,14 @@ type AppSpecResource struct {
 }
 
 type AppSpec struct {
-	Version   string                       `yaml:"version"`
-	Resources []map[string]AppSpecResource `yaml:"Resources"`
+	Version   string                        `yaml:"version"`
+	Resources []map[string]*AppSpecResource `yaml:"Resources"`
 }
 
 type DeploySpec struct {
-	Version   string                          `yaml:"version"`
-	Resources []map[string]DeploySpecResource `yaml:"Resources"`
-	AppSpec   *AppSpec                        `yaml:"AppSpec"`
+	Version   string                           `yaml:"version"`
+	Resources []map[string]*DeploySpecResource `yaml:"Resources"`
+	AppSpec   *AppSpec                         `yaml:"AppSpec"`
 }
 
 type Reconciler struct {
@@ -51,14 +51,14 @@ type Reconciler struct {
 func (r *Reconciler) Reconcile(deploySpec *DeploySpec) (*AppSpec, error) {
 	finalAppSpec := &AppSpec{
 		Version:   deploySpec.AppSpec.Version,
-		Resources: make([]map[string]AppSpecResource, 0),
+		Resources: make([]map[string]*AppSpecResource, 0),
 	}
 
-	deploySpecResourcesByKey := make(map[string]DeploySpecResource)
+	deploySpecResourcesByKey := map[string]DeploySpecResource{}
 
 	for _, deplySpecResource := range deploySpec.Resources {
 		for key, resource := range deplySpecResource {
-			deploySpecResourcesByKey[key] = resource
+			deploySpecResourcesByKey[key] = *resource
 		}
 	}
 
@@ -74,14 +74,15 @@ func (r *Reconciler) Reconcile(deploySpec *DeploySpec) (*AppSpec, error) {
 
 				deploySpecResource := deploySpecResourcesByKey[key]
 
-				finalAppspecResource, err := reconciler.ReconcileResource(&resource, &deploySpecResource)
+				finalAppspecResource, err := reconciler.ReconcileResource(resource, &deploySpecResource)
 
+				// TOOD: This error is getting swallowed
 				if err != nil {
 					return nil, err
 				}
 
-				finalAppspecResourceByKey := make(map[string]AppSpecResource)
-				finalAppspecResourceByKey[key] = *finalAppspecResource
+				finalAppspecResourceByKey := map[string]*AppSpecResource{}
+				finalAppspecResourceByKey[key] = finalAppspecResource
 				finalAppSpec.Resources = append(finalAppSpec.Resources, finalAppspecResourceByKey)
 			}
 		}
@@ -123,27 +124,31 @@ func (r *LambdaReconciler) ReconcileResource(appSpecResource *AppSpecResource, d
 	revisionId := *updateFunctionCodeOutput.RevisionId
 	codeSha := *updateFunctionCodeOutput.CodeSha256
 
-	environment := &lambdatypes.Environment{
-		Variables: deploySpecResource.DeploySpecFunctionConfiguration.Environment,
-	}
+	// TODO: Merge this with current environment
+	// environment := &lambdatypes.Environment{
+	// 	Variables: deploySpecResource.DeploySpecFunctionConfiguration.Environment,
+	// }
 
-	updateFunctionConfigurationOutput, err := r.Client.UpdateFunctionConfiguration(ctx, &lambda.UpdateFunctionConfigurationInput{
-		FunctionName: functioName,
-		RevisionId:   &revisionId,
-		Environment:  environment,
-	})
+	// updateFunctionConfigurationOutput, err := r.Client.UpdateFunctionConfiguration(ctx, &lambda.UpdateFunctionConfigurationInput{
+	// 	FunctionName: functioName,
+	// 	RevisionId:   &revisionId,
+	// 	Environment:  environment,
+	// })
 
-	if err != nil {
-		return nil, err
-	}
+	// if err != nil {
+	// 	return nil, err
+	// }
 
-	revisionId = *updateFunctionConfigurationOutput.RevisionId
-	codeSha = *updateFunctionConfigurationOutput.CodeSha256
+	// revisionId = *updateFunctionConfigurationOutput.RevisionId
+	// codeSha = *updateFunctionConfigurationOutput.CodeSha256
+
+	description := fmt.Sprintf("s3://%s/%s", deploySpecResource.FunctionCode.S3Bucket, deploySpecResource.FunctionCode.S3Key)
 
 	publishVersionOutput, err := r.Client.PublishVersion(ctx, &lambda.PublishVersionInput{
 		FunctionName: functioName,
 		RevisionId:   &revisionId,
 		CodeSha256:   &codeSha,
+		Description:  &description,
 	})
 
 	if err != nil {
