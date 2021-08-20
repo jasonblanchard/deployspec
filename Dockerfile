@@ -28,7 +28,7 @@ RUN cp /build/deployspec ./deployspec
 RUN mkdir /data
 
 # Create the minimal runtime image
-FROM public.ecr.aws/ubuntu/ubuntu:20.04
+FROM ubuntu:latest
 
 COPY --chown=0:0 --from=builder /dist /
 
