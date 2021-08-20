@@ -67,6 +67,10 @@ to quickly create a Cobra application.`,
 
 		finalAppSpec, err := reconciler.Reconcile(spec)
 
+		if err != nil {
+			return err
+		}
+
 		finalAppSpecString, err := yaml.Marshal(finalAppSpec)
 
 		if err != nil {

@@ -76,7 +76,6 @@ func (r *Reconciler) Reconcile(deploySpec *DeploySpec) (*AppSpec, error) {
 
 				finalAppspecResource, err := reconciler.ReconcileResource(resource, &deploySpecResource)
 
-				// TOOD: This error is getting swallowed
 				if err != nil {
 					return nil, err
 				}
