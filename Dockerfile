@@ -30,6 +30,9 @@ RUN mkdir /data
 # Create the minimal runtime image
 FROM ubuntu:latest
 
+RUN apt-get update
+RUN apt-get install -y ca-certificates
+
 COPY --chown=0:0 --from=builder /dist /
 
 # Set up the app to run as a non-root user inside the /data folder
