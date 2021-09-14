@@ -1,64 +1,131 @@
 package deployspec
 
 import (
-	"context"
-	"fmt"
-
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	deployspeclambda "github.com/jasonblanchard/deployspec/deployspec-sdk/lambda"
+	"github.com/mitchellh/mapstructure"
+	"gopkg.in/yaml.v3"
 )
 
-type DeploySpecFunctionCode struct {
-	S3Bucket string `yaml:"S3Bucket"`
-	S3Key    string `yaml:"S3Key"`
+// AppSpecResourceBox these resources are polymorphic, i.e. they can be different depending on `Type`. This holds all possible values which can be checked downstream.
+// Implements custom marshalling to render the appropriate type.
+type AppSpecResourceBox struct {
+	Type   string
+	Lambda *deployspeclambda.AppSpecResource
 }
 
-type DeploySpecFunctionConfiguration struct {
-	Environment map[string]string `yaml:"Environment"`
+func (r *AppSpecResourceBox) MarshalYAML() (interface{}, error) {
+	if r.Type == "AWS::Lambda::Function" {
+		return r.Lambda, nil
+	}
+	return nil, nil
 }
 
-type DeploySpecResource struct {
-	FunctionCode                    *DeploySpecFunctionCode          `yaml:"FunctionCode"`
-	DeploySpecFunctionConfiguration *DeploySpecFunctionConfiguration `yaml:"FunctionConfiguration"`
+func (r *AppSpecResourceBox) UnmarshalYAML(node *yaml.Node) error {
+	type AppSpecResource struct {
+		Type string
+	}
+
+	raw := map[string]interface{}{}
+	err := node.Decode(raw)
+
+	if err != nil {
+		return err
+	}
+
+	var resource AppSpecResource
+	err = mapstructure.Decode(raw, &resource)
+
+	if err != nil {
+		return err
+	}
+
+	r.Type = resource.Type
+
+	if resource.Type == "AWS::Lambda::Function" {
+		var lambdaResource deployspeclambda.AppSpecResource
+		err = mapstructure.Decode(raw, &lambdaResource)
+		if err != nil {
+			return err
+		}
+
+		r.Lambda = &lambdaResource
+	}
+
+	return nil
 }
 
-type AppSpecProperties struct {
-	Name           string `yaml:"Name"`
-	Alias          string `yaml:"Alias"`
-	CurrentVersion string `yaml:"CurrentVersion"`
-	TargetVersion  string `yaml:"TargetVersion"`
+// DeploySpecResourceBox these resources are polymorphic, i.e. they can be different depending on `Type`. This holds all possible values which can be checked downstream.
+// Implements custom marshalling to render the appropriate type.
+type DeploySpecResourceBox struct {
+	Type   string
+	Lambda *deployspeclambda.DeploySpecResource
 }
 
-type AppSpecResource struct {
-	Type       string             `yaml:"Type"`
-	Properties *AppSpecProperties `yaml:"Properties"`
+func (r *DeploySpecResourceBox) UnmarshalYAML(node *yaml.Node) error {
+	type DeploySpecResource struct {
+		Type string
+	}
+
+	raw := map[string]interface{}{}
+	err := node.Decode(raw)
+
+	if err != nil {
+		return err
+	}
+
+	var resource DeploySpecResource
+	err = mapstructure.Decode(raw, &resource)
+
+	if err != nil {
+		return err
+	}
+
+	r.Type = resource.Type
+
+	if resource.Type == "AWS::Lambda::Function" {
+		var lambdaResource deployspeclambda.DeploySpecResource
+		err = mapstructure.Decode(raw, &lambdaResource)
+		if err != nil {
+			return err
+		}
+
+		r.Lambda = &lambdaResource
+	}
+
+	return nil
 }
 
 type AppSpec struct {
-	Version   string                        `yaml:"version"`
-	Resources []map[string]*AppSpecResource `yaml:"Resources"`
+	Version   string                           `yaml:"version"`
+	Resources []map[string]*AppSpecResourceBox `yaml:"Resources"`
 }
 
 type DeploySpec struct {
-	Version   string                           `yaml:"version"`
-	Resources []map[string]*DeploySpecResource `yaml:"Resources"`
-	AppSpec   *AppSpec                         `yaml:"AppSpec"`
+	Version   string                              `yaml:"version"`
+	Resources []map[string]*DeploySpecResourceBox `yaml:"Resources"`
+	AppSpec   *AppSpec                            `yaml:"AppSpec"`
 }
 
 type Reconciler struct {
 	Client *lambda.Client
 }
 
-func (r *Reconciler) Reconcile(deploySpec *DeploySpec) (*AppSpec, error) {
+type ReconcileOptions struct {
+	DryRun bool
+}
+
+func (r *Reconciler) Reconcile(deploySpec *DeploySpec, ops *ReconcileOptions) (*AppSpec, error) {
 	finalAppSpec := &AppSpec{
 		Version:   deploySpec.AppSpec.Version,
-		Resources: make([]map[string]*AppSpecResource, 0),
+		Resources: make([]map[string]*AppSpecResourceBox, 0),
 	}
 
-	deploySpecResourcesByKey := map[string]DeploySpecResource{}
+	deploySpecResourcesByKey := map[string]*DeploySpecResourceBox{}
 
 	for _, deplySpecResource := range deploySpec.Resources {
 		for key, resource := range deplySpecResource {
-			deploySpecResourcesByKey[key] = *resource
+			deploySpecResourcesByKey[key] = resource
 		}
 	}
 
@@ -68,104 +135,29 @@ func (r *Reconciler) Reconcile(deploySpec *DeploySpec) (*AppSpec, error) {
 
 			switch resourceType {
 			case "AWS::Lambda::Function":
-				reconciler := &LambdaReconciler{
+				reconciler := &deployspeclambda.Reconciler{
 					Client: r.Client,
 				}
 
 				deploySpecResource := deploySpecResourcesByKey[key]
 
-				finalAppspecResource, err := reconciler.ReconcileResource(resource, &deploySpecResource)
+				finalAppspecResource, err := reconciler.ReconcileResource(resource.Lambda, deploySpecResource.Lambda, &deployspeclambda.ReconcileResourceOpts{
+					Dryrun: ops.DryRun,
+				})
 
 				if err != nil {
 					return nil, err
 				}
 
-				finalAppspecResourceByKey := map[string]*AppSpecResource{}
-				finalAppspecResourceByKey[key] = finalAppspecResource
+				finalAppspecResourceByKey := map[string]*AppSpecResourceBox{}
+				finalAppspecResourceByKey[key] = &AppSpecResourceBox{
+					Type:   finalAppspecResource.Type,
+					Lambda: finalAppspecResource,
+				}
 				finalAppSpec.Resources = append(finalAppSpec.Resources, finalAppspecResourceByKey)
 			}
 		}
 	}
 
 	return finalAppSpec, nil
-}
-
-type LambdaReconciler struct {
-	Client *lambda.Client
-}
-
-func (r *LambdaReconciler) ReconcileResource(appSpecResource *AppSpecResource, deploySpecResource *DeploySpecResource) (*AppSpecResource, error) {
-	aliasName := "release"
-	functioName := &appSpecResource.Properties.Name
-	ctx := context.Background()
-
-	alias, err := r.Client.GetAlias(ctx, &lambda.GetAliasInput{
-		FunctionName: functioName,
-		Name:         &aliasName,
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	currentVersion := *alias.FunctionVersion
-
-	updateFunctionCodeOutput, err := r.Client.UpdateFunctionCode(ctx, &lambda.UpdateFunctionCodeInput{
-		FunctionName: functioName,
-		S3Bucket:     &deploySpecResource.FunctionCode.S3Bucket,
-		S3Key:        &deploySpecResource.FunctionCode.S3Key,
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	revisionId := *updateFunctionCodeOutput.RevisionId
-	codeSha := *updateFunctionCodeOutput.CodeSha256
-
-	// TODO: Merge this with current environment
-	// environment := &lambdatypes.Environment{
-	// 	Variables: deploySpecResource.DeploySpecFunctionConfiguration.Environment,
-	// }
-
-	// updateFunctionConfigurationOutput, err := r.Client.UpdateFunctionConfiguration(ctx, &lambda.UpdateFunctionConfigurationInput{
-	// 	FunctionName: functioName,
-	// 	RevisionId:   &revisionId,
-	// 	Environment:  environment,
-	// })
-
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// revisionId = *updateFunctionConfigurationOutput.RevisionId
-	// codeSha = *updateFunctionConfigurationOutput.CodeSha256
-
-	description := fmt.Sprintf("s3://%s/%s", deploySpecResource.FunctionCode.S3Bucket, deploySpecResource.FunctionCode.S3Key)
-
-	publishVersionOutput, err := r.Client.PublishVersion(ctx, &lambda.PublishVersionInput{
-		FunctionName: functioName,
-		RevisionId:   &revisionId,
-		CodeSha256:   &codeSha,
-		Description:  &description,
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	targetVersion := *publishVersionOutput.Version
-
-	// Return full AppSpec with currentVersion & targetVersion set
-	output := &AppSpecResource{
-		Type: appSpecResource.Type,
-		Properties: &AppSpecProperties{
-			Name:           appSpecResource.Properties.Name,
-			Alias:          appSpecResource.Properties.Alias,
-			CurrentVersion: currentVersion,
-			TargetVersion:  targetVersion,
-		},
-	}
-
-	return output, nil
 }

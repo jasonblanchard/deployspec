@@ -4,10 +4,6 @@ Resources:
       FunctionCode:
         S3Bucket: mybucket
         S3Key: some/path/source.zip
-      FunctionConfiguration:
-        Environment:
-          someKey: somevalue
-          sha: aaabbbccc
 Appspec:
   version: 0.0
   Resources:

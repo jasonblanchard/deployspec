@@ -25,7 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/jasonblanchard/deployspec/deployspec-sdk"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
 // applyCmd represents the apply command
@@ -40,6 +40,7 @@ This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		filepath, err := cmd.Flags().GetString(("file"))
+		dryrun, err := cmd.Flags().GetBool("dryrun")
 
 		if err != nil {
 			return err
@@ -54,6 +55,10 @@ to quickly create a Cobra application.`,
 		spec := &deployspec.DeploySpec{}
 		err = yaml.Unmarshal(yamlFile, spec)
 
+		if err != nil {
+			return err
+		}
+
 		cfg, err := config.LoadDefaultConfig(context.TODO())
 		if err != nil {
 			log.Fatal(err)
@@ -65,7 +70,9 @@ to quickly create a Cobra application.`,
 			Client: lambdaclient,
 		}
 
-		finalAppSpec, err := reconciler.Reconcile(spec)
+		finalAppSpec, err := reconciler.Reconcile(spec, &deployspec.ReconcileOptions{
+			DryRun: dryrun,
+		})
 
 		if err != nil {
 			return err
@@ -96,5 +103,6 @@ func init() {
 	// is called directly, e.g.:
 	// applyCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 	applyCmd.Flags().StringP("file", "f", "", "deployspec file")
+	applyCmd.Flags().BoolP("dryrun", "d", false, "Dry run")
 
 }
