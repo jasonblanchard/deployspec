@@ -19,11 +19,11 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
-	"log"
 
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/lambda"
-	"github.com/jasonblanchard/deployspec/deployspec-sdk"
+	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
+
+	"github.com/jasonblanchard/deployspec/sdk/ecs"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -46,52 +46,50 @@ to quickly create a Cobra application.`,
 			return err
 		}
 
+		cfg, err := config.LoadDefaultConfig(context.TODO())
+		if err != nil {
+			return fmt.Errorf("cfg error: %w", err)
+		}
+
+		ecsclient := awsecs.NewFromConfig(cfg)
+		if err != nil {
+			return fmt.Errorf("error creating ecs client: %w", err)
+		}
+
 		yamlFile, err := ioutil.ReadFile(filepath)
 
 		if err != nil {
 			return err
 		}
 
-		spec := &deployspec.DeploySpec{}
-		err = yaml.Unmarshal(yamlFile, spec)
+		input := &ecs.ReconcileInput{}
+		yaml.Unmarshal(yamlFile, input)
+
+		input.DryRun = dryrun
+
+		reconciler := &ecs.Reconciler{
+			Client: ecsclient,
+		}
+		appspec, err := reconciler.Reconcile(input)
 
 		if err != nil {
-			return err
+			return fmt.Errorf("reconcile error: %w", err)
 		}
 
-		cfg, err := config.LoadDefaultConfig(context.TODO())
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		lambdaclient := lambda.NewFromConfig(cfg)
-
-		reconciler := &deployspec.Reconciler{
-			Client: lambdaclient,
-		}
-
-		finalAppSpec, err := reconciler.Reconcile(spec, &deployspec.ReconcileOptions{
-			DryRun: dryrun,
-		})
+		appspecyaml, err := yaml.Marshal(appspec)
 
 		if err != nil {
-			return err
+			return fmt.Errorf("yaml marshall error: %w", err)
 		}
 
-		finalAppSpecString, err := yaml.Marshal(finalAppSpec)
-
-		if err != nil {
-			return err
-		}
-
-		fmt.Println(string(finalAppSpecString))
+		fmt.Println(fmt.Sprintf("%v", string(appspecyaml)))
 
 		return nil
 	},
 }
 
 func init() {
-	rootCmd.AddCommand(applyCmd)
+	ecsCmd.AddCommand(applyCmd)
 
 	// Here you will define your flags and configuration settings.
 

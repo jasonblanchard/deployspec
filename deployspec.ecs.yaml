@@ -1,0 +1,25 @@
+RegisterTaskDefinitionInput:
+  family: 'my-service-family'
+  containerdefinitions:
+    - name: 'server'
+      image: 'registry.com/myimage'
+      cpu: 0
+      portmappings: 
+        - containerport: 3000
+          hostport: 3000
+      essential: true
+      logconfiguration:
+        logdriver: "awslogs"
+        options:
+          awslogs-group: "/aws/ecs/myservice"
+          awslogs-region: "us-east-1"
+          awslogs-stream-prefix: "server"
+      
+BaseAppSpec:
+  Resources:
+      - TargetService:
+          Type: AWS::ECS::Service
+          Properties:
+              LoadBalancerInfo:
+                  ContainerName: busybox
+                  ContainerPort: 8080
