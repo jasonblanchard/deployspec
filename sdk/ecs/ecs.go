@@ -7,6 +7,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 )
 
+type ECSClient interface {
+	RegisterTaskDefinition(ctx context.Context, params *ecs.RegisterTaskDefinitionInput, optFns ...func(*ecs.Options)) (*ecs.RegisterTaskDefinitionOutput, error)
+}
+
 type AppSpecLoadBalancerInfo struct {
 	ContainerName string `yaml:"ContainerName"`
 	ContainerPort int    `yaml:"ContainerPort"`
@@ -32,7 +36,7 @@ type AppSpec struct {
 }
 
 type Reconciler struct {
-	Client *ecs.Client
+	Client ECSClient
 }
 
 type ReconcileInput struct {
